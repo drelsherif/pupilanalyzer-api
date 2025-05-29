@@ -10,4 +10,3 @@ Form field: `file` (image file)
 Returns:  
 ```json
 { "pupil_area": 123.45 }
-```
