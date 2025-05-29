@@ -9,6 +9,44 @@ from typing import List, Dict, Any
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def analyze_pupil_response(image_bytes):
+    """
+    Analyze single image for pupil detection (legacy function)
+    """
+    try:
+        npimg = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            logger.error("Failed to decode image")
+            return create_empty_result()
+        
+        logger.info(f"Image decoded: {frame.shape}")
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Try multiple detection approaches
+        result = detect_with_hough_circles(gray)
+        if result["pupil_area"] > 0:
+            logger.info("Pupil detected with Hough circles")
+            return result
+        
+        result = detect_with_adaptive_threshold(gray)
+        if result["pupil_area"] > 0:
+            logger.info("Pupil detected with adaptive threshold")
+            return result
+        
+        result = detect_with_basic_threshold(gray)
+        if result["pupil_area"] > 0:
+            logger.info("Pupil detected with basic threshold")
+            return result
+        
+        logger.warning("No pupil detected with any method")
+        return create_empty_result()
+        
+    except Exception as e:
+        logger.error(f"Error in pupil analysis: {str(e)}")
+        return create_empty_result()
+
 def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
     """
     Analyze pupil response from entire video file
@@ -127,7 +165,7 @@ def analyze_single_frame(frame: np.ndarray) -> Dict[str, Any]:
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Try multiple detection methods (same as before)
+        # Try multiple detection methods
         result = detect_with_hough_circles(gray)
         if result["pupil_area"] > 0:
             return result
