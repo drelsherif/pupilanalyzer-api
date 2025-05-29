@@ -55,7 +55,7 @@ async def analyze_image(file: UploadFile = File(...)):
 async def analyze_video(file: UploadFile = File(...)):
     """
     Analyze entire video for pupil detection over time
-    Returns time-series data with statistics
+    Returns time-series data with statistics - iOS Compatible Format
     """
     try:
         logger.info(f"Analyzing pupil video: {file.filename}, size: {file.size} bytes")
@@ -63,17 +63,98 @@ async def analyze_video(file: UploadFile = File(...)):
         # Validate file type
         if not file.content_type or not file.content_type.startswith('video/'):
             logger.warning(f"Non-video file uploaded: {file.content_type}")
-            # Still try to process it, might be a video with wrong MIME type
         
         contents = await file.read()
         result = analyze_pupil_video(contents)
         
         logger.info(f"Pupil video analysis complete: {result['success']}")
-        return result
+        
+        # Return in exact format iOS expects
+        if result['success']:
+            # Convert all numeric values to strings for iOS compatibility
+            video_info = result["video_info"]
+            summary = result["summary"] 
+            pupil_data = result["pupil_data"]
+            
+            # Ensure all values are properly formatted for iOS parsing
+            response = {
+                "success": True,  # Boolean for iOS
+                "video_info": {
+                    "duration": str(video_info["duration"]),
+                    "fps": video_info["fps"],  # Keep as number
+                    "total_frames": video_info["total_frames"],  # Keep as number
+                    "processed_frames": video_info["processed_frames"]  # Keep as number
+                },
+                "summary": {
+                    "average_area": str(summary["average_area"]),
+                    "min_area": str(summary["min_area"]),
+                    "max_area": str(summary["max_area"]),
+                    "std_area": str(summary["std_area"]),
+                    "area_range": str(summary["area_range"]),
+                    "detection_rate": summary["detection_rate"]  # Keep as number
+                },
+                "pupil_data": []
+            }
+            
+            # Format pupil data with proper types
+            for data_point in pupil_data:
+                formatted_point = {
+                    "pupil_area": str(data_point["pupil_area"]),
+                    "timestamp": str(data_point["timestamp"]) if isinstance(data_point["timestamp"], (int, float)) else data_point["timestamp"],
+                    "frame_number": data_point["frame_number"],
+                    # Include additional fields iOS might expect
+                    "center": data_point.get("center", [0, 0]),
+                    "axes": data_point.get("axes", [0, 0]), 
+                    "angle": data_point.get("angle", 0),
+                    "circularity": data_point.get("circularity", 1.0)
+                }
+                response["pupil_data"].append(formatted_point)
+            
+            logger.info(f"Returning {len(response['pupil_data'])} pupil data points to iOS")
+            return response
+            
+        else:
+            return {
+                "success": False,
+                "error": "Analysis failed - no pupil data detected",
+                "video_info": {
+                    "duration": "0",
+                    "fps": 0,
+                    "total_frames": 0,
+                    "processed_frames": 0
+                },
+                "summary": {
+                    "average_area": "0",
+                    "min_area": "0", 
+                    "max_area": "0",
+                    "std_area": "0",
+                    "area_range": "0",
+                    "detection_rate": 0
+                },
+                "pupil_data": []
+            }
         
     except Exception as e:
         logger.error(f"Error analyzing pupil video: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": f"Server error: {str(e)}",
+            "video_info": {
+                "duration": "0",
+                "fps": 0,
+                "total_frames": 0, 
+                "processed_frames": 0
+            },
+            "summary": {
+                "average_area": "0",
+                "min_area": "0",
+                "max_area": "0", 
+                "std_area": "0",
+                "area_range": "0",
+                "detection_rate": 0
+            },
+            "pupil_data": []
+        }
 
 @app.post("/analyze-eye-movement")
 async def analyze_eye_movement(
