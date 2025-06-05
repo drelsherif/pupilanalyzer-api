@@ -45,9 +45,9 @@ def analyze_pupil_response(image_bytes):
         logger.error(f"Error in pupil analysis: {str(e)}")
         return create_empty_result()
 
-def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
+def analyze_pupil_video(video_bytes: bytes, test_metadata: dict = None) -> Dict[str, Any]:
     """
-    Analyze pupil response from entire video file - OPTIMIZED VERSION
+    Analyze pupil response from entire video file - ENHANCED VERSION for Light Response
     """
     temp_video_path = None
     
@@ -73,11 +73,33 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
         
         logger.info(f"Video: {frame_count} frames, {fps:.2f} FPS, {duration:.2f}s duration")
         
-        # OPTIMIZATION: Process fewer frames for speed
-        max_frames_to_process = 10  # Reduced from ~22 to 10
+        # ENHANCED: Dynamic frame processing based on test type and duration
+        test_type = "general"
+        if test_metadata:
+            test_type = test_metadata.get("test_type", "general")
+        
+        # Determine optimal frame count for better light response detection
+        if test_type == "light_response":
+            # For light response: ensure good temporal resolution (at least 5 frames per second)
+            min_frames_per_second = 5
+            max_frames_to_process = min(int(duration * min_frames_per_second), 50)  # Cap at 50
+            logger.info(f"LIGHT RESPONSE MODE: Using {max_frames_to_process} frames for enhanced detection")
+        elif duration <= 3.0:
+            # Short videos: moderate frame count
+            max_frames_to_process = 20
+            logger.info(f"SHORT VIDEO MODE: Using {max_frames_to_process} frames")
+        elif duration >= 10.0:
+            # Long videos: reasonable sampling
+            max_frames_to_process = 40
+            logger.info(f"LONG VIDEO MODE: Using {max_frames_to_process} frames")
+        else:
+            # Standard videos: balanced approach
+            max_frames_to_process = 30
+            logger.info(f"STANDARD MODE: Using {max_frames_to_process} frames")
+        
         sample_interval = max(1, frame_count // max_frames_to_process)
         
-        logger.info(f"OPTIMIZATION: Processing every {sample_interval}th frame (max {max_frames_to_process} frames)")
+        logger.info(f"ENHANCED: Processing every {sample_interval}th frame (max {max_frames_to_process} frames)")
         
         pupil_data = []
         frame_number = 0
@@ -92,7 +114,7 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
             if frame_number % sample_interval == 0 and processed_count < max_frames_to_process:
                 timestamp = frame_number / fps if fps > 0 else 0
                 
-                # OPTIMIZATION: Use only the fastest detection method
+                # Use optimized detection method
                 pupil_result = analyze_single_frame_fast(frame)
                 
                 if pupil_result["pupil_area"] > 0:
@@ -106,7 +128,7 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
                         "circularity": pupil_result["circularity"]
                     })
                     
-                    logger.info(f"Frame {frame_number}: pupil_area = {pupil_result['pupil_area']:.1f}")
+                    logger.info(f"Frame {frame_number} (t={timestamp:.2f}s): pupil_area = {pupil_result['pupil_area']:.1f}")
                 
                 processed_count += 1
             
@@ -117,14 +139,24 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
         # Calculate summary statistics
         if pupil_data:
             areas = [d["pupil_area"] for d in pupil_data]
+            timestamps = [d["timestamp"] for d in pupil_data]
+            
             summary = {
                 "average_area": round(np.mean(areas), 2),
                 "min_area": round(np.min(areas), 2),
                 "max_area": round(np.max(areas), 2),
                 "std_area": round(np.std(areas), 2),
                 "area_range": round(np.max(areas) - np.min(areas), 2),
-                "detection_rate": round(len(pupil_data) / processed_count * 100, 1) if processed_count > 0 else 0
+                "detection_rate": round(len(pupil_data) / processed_count * 100, 1) if processed_count > 0 else 0,
+                # ENHANCED: Add light response specific metrics
+                "temporal_resolution": round(len(pupil_data) / duration, 2) if duration > 0 else 0,
+                "analysis_mode": test_type
             }
+            
+            # ENHANCED: Light response analysis
+            if test_type == "light_response" and len(pupil_data) >= 3:
+                light_response = analyze_light_response_pattern(pupil_data, duration)
+                summary.update(light_response)
         else:
             summary = {
                 "average_area": 0,
@@ -132,7 +164,9 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
                 "max_area": 0,
                 "std_area": 0,
                 "area_range": 0,
-                "detection_rate": 0
+                "detection_rate": 0,
+                "temporal_resolution": 0,
+                "analysis_mode": test_type
             }
         
         result = {
@@ -141,13 +175,18 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
                 "duration": round(duration, 2),
                 "fps": round(fps, 2),
                 "total_frames": frame_count,
-                "processed_frames": len(pupil_data)
+                "processed_frames": len(pupil_data),
+                "sample_interval": sample_interval,
+                "test_type": test_type
             },
             "summary": summary,
-            "pupil_data": pupil_data  # Return all data points (already limited to 10)
+            "pupil_data": pupil_data
         }
         
-        logger.info(f"OPTIMIZED analysis complete: {len(pupil_data)} pupil detections from {processed_count} processed frames")
+        logger.info(f"ENHANCED analysis complete: {len(pupil_data)} pupil detections from {processed_count} processed frames")
+        if test_type == "light_response":
+            logger.info(f"Light response temporal resolution: {summary.get('temporal_resolution', 0):.1f} frames/second")
+        
         return result
         
     except Exception as e:
@@ -161,6 +200,58 @@ def analyze_pupil_video(video_bytes: bytes) -> Dict[str, Any]:
                 os.unlink(temp_video_path)
             except:
                 pass
+
+def analyze_light_response_pattern(pupil_data: List[Dict], duration: float) -> Dict[str, Any]:
+    """
+    ENHANCED: Analyze pupil light response pattern for clinical metrics
+    """
+    try:
+        areas = [d["pupil_area"] for d in pupil_data]
+        timestamps = [d["timestamp"] for d in pupil_data]
+        
+        # Divide into phases based on timestamp (assuming 6-second test: 0-2s baseline, 2-4s light, 4-6s recovery)
+        baseline_data = [area for area, t in zip(areas, timestamps) if 0 <= t < 2.0]
+        light_data = [area for area, t in zip(areas, timestamps) if 2.0 <= t < 4.0]
+        recovery_data = [area for area, t in zip(areas, timestamps) if 4.0 <= t <= 6.0]
+        
+        light_response_metrics = {}
+        
+        if baseline_data and light_data:
+            baseline_avg = np.mean(baseline_data)
+            light_min = np.min(light_data)
+            
+            # Calculate pupil constriction percentage
+            constriction_percent = ((baseline_avg - light_min) / baseline_avg * 100) if baseline_avg > 0 else 0
+            light_response_metrics["pupil_constriction_percent"] = round(constriction_percent, 2)
+            light_response_metrics["baseline_average"] = round(baseline_avg, 2)
+            light_response_metrics["minimum_during_light"] = round(light_min, 2)
+            
+            # Response quality assessment
+            if constriction_percent > 20:
+                response_quality = "Excellent"
+            elif constriction_percent > 15:
+                response_quality = "Good" 
+            elif constriction_percent > 10:
+                response_quality = "Moderate"
+            elif constriction_percent > 5:
+                response_quality = "Weak"
+            else:
+                response_quality = "Poor"
+            
+            light_response_metrics["response_quality"] = response_quality
+            light_response_metrics["phase_data_quality"] = {
+                "baseline_frames": len(baseline_data),
+                "light_frames": len(light_data),
+                "recovery_frames": len(recovery_data)
+            }
+            
+            logger.info(f"Light Response Analysis: {constriction_percent:.1f}% constriction, Quality: {response_quality}")
+        
+        return light_response_metrics
+        
+    except Exception as e:
+        logger.error(f"Error in light response analysis: {str(e)}")
+        return {"light_response_error": str(e)}
 
 def analyze_single_frame_fast(frame: np.ndarray) -> Dict[str, Any]:
     """
